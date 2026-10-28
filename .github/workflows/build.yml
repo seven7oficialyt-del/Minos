@@ -1,0 +1,75 @@
+name: Compilar Minos (APK)
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Descomprimir el proyecto
+        run: |
+          test -f proyecto.zip || { echo "No encuentro proyecto.zip en la raíz del repositorio"; exit 1; }
+          rm -rf src
+          unzip -q -o proyecto.zip -d src
+          ls src
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Preparar el SDK de Android
+        continue-on-error: true
+        run: echo y | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Instalar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Compilar
+        working-directory: src
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Resumen de errores
+        if: failure()
+        working-directory: src
+        run: |
+          if [ -f build.log ]; then
+            {
+              echo '## Errores de compilación'
+              echo '```'
+              grep -E '^e: |What went wrong|error:|Execution failed' -A4 build.log | head -80 || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guardar el registro si falla
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registro-errores
+          path: src/build.log
+          if-no-files-found: ignore
+
+      - name: Preparar el APK
+        run: cp src/app/build/outputs/apk/debug/app-debug.apk Minos-debug.apk
+
+      - name: Subir el APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: minos-apk
+          path: Minos-debug.apk
+          if-no-files-found: error
